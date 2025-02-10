@@ -1,0 +1,92 @@
+---
+- name: Setup Docker on Control Node
+  hosts: control
+  become: yes
+  tasks:
+    - name: Update yum cache
+      yum:
+        update_cache: yes
+    
+    - name: Install Docker dependencies
+      yum:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+        state: present
+    
+    - name: Add Docker repository
+      command: yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    
+    - name: Install Docker
+      yum:
+        name: docker-ce
+        state: present
+    
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+- name: Setup Docker on Target Node
+  hosts: target
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+    
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: present
+    
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+    
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        state: present
+    
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+    
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+    
+    - name: Create application directory
+      file:
+        path: /opt/dockerized-service
+        state: directory
+        mode: '0755'
+    
+    - name: Copy environment file
+      copy:
+        src: ../app/.env.example
+        dest: /opt/dockerized-service/.env
+        mode: '0600'
