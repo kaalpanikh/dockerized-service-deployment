@@ -1,70 +1,17 @@
 ---
-- name: Setup Docker on Control Node
+- name: Setup Docker and Nginx on Control Node
   hosts: control
   become: yes
   tasks:
-    - name: Update yum cache
-      yum:
+    - name: Update dnf cache
+      dnf:
         update_cache: yes
     
-    - name: Install Docker dependencies
-      yum:
-        name:
-          - yum-utils
-          - device-mapper-persistent-data
-          - lvm2
-        state: present
-    
-    - name: Add Docker repository
-      command: yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-    
-    - name: Install Docker
-      yum:
-        name: docker-ce
-        state: present
-    
-    - name: Start Docker service
-      service:
-        name: docker
-        state: started
-        enabled: yes
-    
-    - name: Add user to docker group
-      user:
-        name: "{{ ansible_user }}"
-        groups: docker
-        append: yes
-
-- name: Setup Docker on Target Node
-  hosts: target
-  become: yes
-  tasks:
-    - name: Update apt cache
-      apt:
-        update_cache: yes
-    
-    - name: Install required packages
-      apt:
-        name:
-          - apt-transport-https
-          - ca-certificates
-          - curl
-          - software-properties-common
-        state: present
-    
-    - name: Add Docker GPG key
-      apt_key:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        state: present
-    
-    - name: Add Docker repository
-      apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
-        state: present
-    
-    - name: Install Docker
-      apt:
-        name: docker-ce
+    - name: Install Docker and Nginx
+      dnf:
+        name: 
+          - docker
+          - nginx
         state: present
     
     - name: Start Docker service
@@ -84,9 +31,143 @@
         path: /opt/dockerized-service
         state: directory
         mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
     
     - name: Copy environment file
       copy:
         src: ../app/.env.example
         dest: /opt/dockerized-service/.env
         mode: '0600'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+    
+    - name: Create Nginx log directory
+      file:
+        path: /var/log/nginx
+        state: directory
+        mode: '0755'
+    
+    - name: Copy Nginx configuration
+      template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/conf.d/dockerized-service.conf
+        mode: '0644'
+      notify: Reload Nginx
+    
+    - name: Start and enable Nginx service
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded
+
+- name: Setup Docker on Target Node
+  hosts: target
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - nginx
+        state: present
+        update_cache: yes
+    
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+    
+    - name: Get Ubuntu release version
+      command: lsb_release -cs
+      register: ubuntu_version
+      changed_when: false
+    
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ubuntu_version.stdout }} stable"
+        state: present
+        update_cache: yes
+    
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: yes
+    
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+        daemon_reload: yes
+    
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+    
+    - name: Create application directory
+      file:
+        path: /opt/dockerized-service
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+    
+    - name: Copy environment file
+      copy:
+        src: ../app/.env.example
+        dest: /opt/dockerized-service/.env
+        mode: '0600'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+    
+    - name: Create Nginx log directory
+      file:
+        path: /var/log/nginx
+        state: directory
+        mode: '0755'
+        owner: www-data
+        group: www-data
+    
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+    
+    - name: Copy Nginx configuration
+      template:
+        src: templates/nginx.conf.j2
+        dest: /etc/nginx/conf.d/dockerized-service.conf
+        mode: '0644'
+      notify: Reload Nginx
+    
+    - name: Start and enable Nginx service
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Reload Nginx
+      systemd:
+        name: nginx
+        state: reloaded

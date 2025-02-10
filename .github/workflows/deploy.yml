@@ -6,38 +6,58 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     
     steps:
-    - uses: actions/checkout@v2
-    
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Log in to the Container registry
+      uses: docker/login-action@v2
       with:
-        registry: ghcr.io
+        registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    
+
+    - name: Extract metadata for Docker
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=sha,format=long
+          type=ref,event=branch
+          latest
+
     - name: Build and push Docker image
-      uses: docker/build-push-action@v2
+      uses: docker/build-push-action@v4
       with:
         context: ./app
         push: true
-        tags: |
-          ghcr.io/${{ github.repository }}:latest
-          ghcr.io/${{ github.repository }}:${{ github.sha }}
-    
-    - name: Deploy to Server
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+
+    - name: Deploy to Target Node
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.TARGET_HOST }}
-        username: ${{ secrets.TARGET_USER }}
+        username: ubuntu
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
+          # Login to GitHub Container Registry
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
           # Pull the latest image
-          docker pull ghcr.io/${{ github.repository }}:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           
           # Stop and remove existing container if it exists
           docker stop dockerized-service || true
@@ -49,4 +69,7 @@ jobs:
             --restart always \
             -p 3000:3000 \
             --env-file /opt/dockerized-service/.env \
-            ghcr.io/${{ github.repository }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          
+          # Clean up old images
+          docker image prune -f
